@@ -7,22 +7,23 @@ import georinex as rnx
 import os
 import time
 import pyinstrument
-from process.correct_position import CorrectPosition
+# from process.correct_position import CorrectPosition
 from process.elevation import Elevation
 from scipy.stats import chi2
 from matplotlib import pyplot as plt 
 import pickle
 import pandas as pd
+from correct_position import CorrectPosition
 
 warnings.filterwarnings("ignore", category=UserWarning, message="Converting non-nanosecond.*")
 
 class SPP():
     #Definição das constantes
-     
 
     def __init__(self, paths, start, end, type_obs):
         self.process = Process()
         self.convert_enu = Elevation()
+
 
         self.deg_elevation_mask = 0
         self.epoch = 0 
@@ -63,48 +64,9 @@ class SPP():
         # self.mask = np.full(((len(self.avail_obs), self.len_sv)), np.nan)
         self.mask = []
 
-    def update_position(self, A, P, dX, dL, c, Lb, sigLb, sigma0_threshold=0.05, value_test=2.70554345409542, max_repet=10):
-        repet = 0
-        test = 0
-        
-        # Passo de atualização da posição
-        Qx = np.linalg.inv(A.T @ P @ A)  # Matriz de covariância dos parâmetros ajustados
-        dX[3] = dX[3] * c  # Ajusta a quarta componente de dX pela velocidade da luz
-        V = A @ dX + dL  # Calcula os resíduos ajustados
-
-        # Calcular sigma0pos
-        sigma0pos = (V.T @ P @ V) / (len(Lb) - 4)
-        alpha = sigma0_threshold  # Nível de significância para o teste estatístico
-        
-        # Teste estatístico usando a distribuição qui-quadrado
-        if sigma0pos > chi2.ppf(1 - alpha, len(Lb) - 4):
-            repet += 1
-            test = 1
-        else:
-            repet = 0
-            test = 0
-
-        CovX = sigma0pos * Qx  # Matriz de covariância escalonada
-        sigLa = A @ CovX @ A.T  # Matriz de covariância das observações ajustadas
-        Qv = sigLb + sigLa  # Matriz de covariância das observações
-        Vpad = V / np.sqrt(np.diag(Qv))  # Resíduos padronizados
-
-        # Ajustes baseados em testes estatísticos
-        if test == 1:
-            if np.max(np.abs(Vpad)) > value_test:
-                condition = np.where(np.abs(Vpad) > value_test)[0]
-                # Aqui você pode atualizar os dados de entrada conforme necessário
-                # Exemplo:
-                # posInputs['epoch'][iEpoch]['GPSSat']['Coord'][condition, 4] = 0
-            else:
-                repet = 0
-
-        if repet == max_repet:
-            repet = 0
-        return repet
-    # return V, CovX, sigma0pos, Qx, sigLa, Qv, Vpad, test, repet
-
-
+        self.pdop = np.full(len(self.avail_obs), np.nan)
+        self.vdop = np.full(len(self.avail_obs), np.nan)
+        self.num_sats = np.full(len(self.avail_obs), np.nan, dtype=int)
  
     def __read_met(self, file_path):
         # Ignorar as linhas de cabeçalho até o final do cabeçalho
@@ -201,12 +163,13 @@ class SPP():
 
             geom_dist = np.sqrt(xaux + yaux + zaux)
     
-            Lo = geom_dist + self.cpos.SPEED_OF_LIGHT * ((self.x[3] - self.cpos.dts[epoch]))
-            dL = np.array(Lb) - np.array(Lo)
+            Lo = geom_dist + self.cpos.SPEED_OF_LIGHT * ((self.x[3] - self.cpos.dts[epoch])) + T + I
+            dL = np.array(Lb) - np.array(Lo) 
             dL = self.process.clear_nan_values(dL)
 
             corr_ephem_filtered = self.process.clear_nan_values(corr_ephem)
             geom_dist_filtered = self.process.clear_nan_values(geom_dist)
+            self.num_sats[epoch] = len(geom_dist_filtered)
 
             A = np.ones((len(geom_dist_filtered), 4))
             for i in range(3): 
@@ -216,34 +179,26 @@ class SPP():
                 inv_ATA = np.linalg.inv((A.T @ P) @ A)
             except np.linalg.LinAlgError:
                 inv_ATA = np.linalg.pinv((A.T @ P) @ A)
+
+                
             dX = inv_ATA @ (A.T @ P) @ dL 
             dX[3] = dX[3] / self.cpos.SPEED_OF_LIGHT
             self.x += dX 
             error = np.linalg.norm(dX)
-            
 
-            
+            Qxx = inv_ATA[0, 0]
+            Qyy = inv_ATA[1, 1]
+            Qzz = inv_ATA[2, 2]
+            self.pdop[epoch] = np.sqrt(Qxx + Qyy + Qzz)
+            self.vdop[epoch] = np.sqrt(Qzz)
+
             if j > 10:
-                print('foi')
                 self.x = np.ones(3)*np.nan
                 break
             
             j += 1 
-            
-
-            # self.repet = self.update_position(A, P, dX, dL, self.cpos.SPEED_OF_LIGHT, Lb, sigLb)    
-            # print(repet)
-        
         
         self.pos_calc[epoch] = self.x[0:3]
-        # print(np.sqrt((self.approx_position[0]-self.x[0])**2+(self.approx_position[1]-self.x[1])**2+(self.approx_position[2]-self.x[2])**2))
-        # self.error_3d[epoch] = error_3d   
-            
-            # print(np.linalg.norm(self.approx_position))
-        #2.037457783927498e+07
-        # sv_avail = list(set(self.svclockbias[index].sv.data) & set(pseudo_ranges.sv.data))
-        # obs_avail = pseudo_ranges.sel(sv=sv_avail)
-
 
             
 
@@ -272,7 +227,7 @@ class SPP():
                 self.elevation[epoch][mask] = np.nan
 
             self.pseudo_ranges[epoch] = obs
-
+            
             # if len(mask_indexs) > 0:
             #     self.mask[epoch, 0:len(mask_indexs)] = mask_indexs
             #     valid_indices = self.mask[epoch][~np.isnan(self.mask[epoch])].astype(int)
@@ -292,7 +247,10 @@ class SPP():
 
         data = {
             "x": self.obs_time,
-            "y": self.pos_calc
+            "y": self.pos_calc,
+            "pdop": self.pdop, 
+            "vdop": self.vdop,
+            "num_sats": self.num_sats
         }
 
         with open("sem_corr_data.pkl", "wb") as f:

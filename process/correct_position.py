@@ -181,7 +181,7 @@ class CorrectPosition():
         return tr
 
     def get_correct_pos(self, obs_time=None, pseudo_ranges=None, epoch=None, instant_transmission=None):
-
+        print(epoch)
         # self.index = np.argmax(np.where(self.dtime < pseudo_ranges.time.data))
         self.index = np.argmin(abs(obs_time - self.dtime))
 

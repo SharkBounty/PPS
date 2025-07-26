@@ -90,30 +90,24 @@ class Process():
         var_filtered = []
         prev_avail = []
         for i, var in enumerate(data):
-            # if i == 23:
-            #     print('a')
-            if not(var.time.dt.minute != 0 and var.time.dt.minute != 59):
-                data_healthy = np.where(sv_health[i].data == 63, False, True)
-                var[np.where(data_healthy == False)] = np.nan
+            if not(var.time.dt.minute.item() != 0 and var.time.dt.minute.item() != 59):
+                # CORREÇÃO: Acessa sv_health[i] diretamente (é um array numpy)
+                # e usa indexação booleana direta, como sugerido pelo erro.
+                # Um satélite com saúde 63 é considerado inutilizável.
+                is_unhealthy = (sv_health[i] == 63)
+                var[is_unhealthy] = np.nan
 
-                if var.time.dt.minute == 59:
+                if var.time.dt.minute.item() == 59:
                     prev_avail = ~np.isnan(var)
                 elif len(prev_avail) > 0:
-                    #index_avail = np.where((np.isnan(var) & prev_avail)|(~data_healthy & prev_avail))
                     index_avail = np.where((np.isnan(var) & prev_avail))
                     var.data[index_avail] = data[i-1].data[index_avail]
-                    # np.where((~data_healthy & prev_avail))
-                    var[np.where(data_healthy == False)] = np.nan
+                    # Aplica a máscara de saúde novamente após preencher os dados
+                    var[is_unhealthy] = np.nan
                     var_filtered.append(var)
             if i == 0:
                 var_filtered.append(var)    
                 
-                
-
-            # if not( and var.time.dt.minute != 59):
-            #     
-
-
         merged = xr.concat(var_filtered, dim="time")
         return merged
 
